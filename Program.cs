@@ -10,7 +10,7 @@ namespace jsdoom
     {
         static void Main(string[] args)
         {
-            new MainWindow().Run();
+            new MainWindow().Run(60, 60);
         }
     }
 }
