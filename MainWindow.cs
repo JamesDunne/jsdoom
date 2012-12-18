@@ -13,6 +13,16 @@ using System.Drawing;
 
 namespace jsdoom
 {
+    public static class StringExtensions
+    {
+        public static string ASCIIZ(this string zstr)
+        {
+            int z = zstr.IndexOf('\0');
+            if (z < 0) return zstr;
+            return zstr.Substring(0, z);
+        }
+    }
+
     class MainWindow : OpenTK.GameWindow
     {
         Random rnd = new Random();
@@ -179,6 +189,40 @@ namespace jsdoom
                     lines[i * 2 + 0] = (ushort)v1;
                     lines[i * 2 + 1] = (ushort)v2;
                 }
+            }
+
+            // Read sectors:
+            var sectorsLump = lumps[ml + (int)MapLump.SECTORS];
+
+            const int sectorSize = (sizeof(short) * 5) + (8 * 2);
+            int numSectors = sectorsLump.Size / sectorSize;
+
+            for (int i = 0; i < numSectors; ++i)
+            {
+                short floorheight = BitConverter.ToInt16(sectorsLump.Data, (i * sectorSize) + (sizeof(short) * 0));
+                short ceilingheight = BitConverter.ToInt16(sectorsLump.Data, (i * sectorSize) + (sizeof(short) * 1));
+                string floorpic = Encoding.ASCII.GetString(sectorsLump.Data, (i * sectorSize) + 0 + (sizeof(short) * 2), 8).ASCIIZ();
+                string ceilingpic = Encoding.ASCII.GetString(sectorsLump.Data, (i * sectorSize) + 8 + (sizeof(short) * 2), 8).ASCIIZ();
+                short lightlevel = BitConverter.ToInt16(sectorsLump.Data, (i * sectorSize) + 16 + (sizeof(short) * 2));
+                short special = BitConverter.ToInt16(sectorsLump.Data, (i * sectorSize) + 16 + (sizeof(short) * 3));
+                short tag = BitConverter.ToInt16(sectorsLump.Data, (i * sectorSize) + 16 + (sizeof(short) * 4));
+            }
+
+            // Read sidedefs:
+            var sidedefsLump = lumps[ml + (int)MapLump.SIDEDEFS];
+
+            const int sidedefSize = (sizeof(short) * 3) + (8 * 3);
+            int numSidedefs = sidedefsLump.Size / sidedefSize;
+
+            for (int i = 0; i < numSidedefs; ++i)
+            {
+                short textureoffset = BitConverter.ToInt16(sidedefsLump.Data, (i * sidedefSize) + (sizeof(short) * 0));
+                short rowoffset = BitConverter.ToInt16(sidedefsLump.Data, (i * sidedefSize) + (sizeof(short) * 1));
+                string toptexture = Encoding.ASCII.GetString(sidedefsLump.Data, (i * sidedefSize) + 0 + (sizeof(short) * 2), 8).ASCIIZ();
+                string bottomtexture = Encoding.ASCII.GetString(sidedefsLump.Data, (i * sidedefSize) + 8 + (sizeof(short) * 2), 8).ASCIIZ();
+                string midtexture = Encoding.ASCII.GetString(sidedefsLump.Data, (i * sidedefSize) + 16 + (sizeof(short) * 2), 8).ASCIIZ();
+                // Front sector, towards viewer.
+                short sector = BitConverter.ToInt16(sidedefsLump.Data, (i * sidedefSize) + 24 + (sizeof(short) * 2));
             }
 
             // Read things:
