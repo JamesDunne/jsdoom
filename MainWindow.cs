@@ -3,14 +3,14 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
+using OpenTK.Graphics.OpenGL;
 
 namespace jsdoom
 {
-    class Program
+    class MainWindow : OpenTK.GameWindow
     {
-        static void Main(string[] args)
+        protected override void OnRenderFrame(OpenTK.FrameEventArgs e)
         {
-            new MainWindow().Run();
         }
     }
 }
