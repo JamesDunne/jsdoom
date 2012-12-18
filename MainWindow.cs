@@ -28,8 +28,9 @@ namespace jsdoom
         AutoResetEvent rendered = new AutoResetEvent(false);
 
         Matrix4 matrixProjection, matrixModelview;
+        Vector3 centerPos;
         float cameraRotation = 0f;
-        float cameraDistance = 0.2f;
+        float cameraDistance = 0.5f;
         private int[] vboIds;
         private Vector3[] verts;
         private bool setup;
@@ -80,6 +81,13 @@ namespace jsdoom
                     return i;
             // Not found.
             return -1;
+        }
+
+        static void MapCoordToVector3(short x, short y, ref Vector3 vec)
+        {
+            vec.X = x / 8192f;
+            vec.Z = -y / 8192f;
+            vec.Y = 0.0f;
         }
 
         async Task Game()
@@ -133,7 +141,7 @@ namespace jsdoom
                 return;
             }
 
-            int ml = FindLump(lumps, "map01");
+            int ml = FindLump(lumps, "map15");
 
             // Read vertices:
             var vertexesLump = lumps[ml + (int)MapLump.VERTEXES];
@@ -141,9 +149,9 @@ namespace jsdoom
             verts = new Vector3[numVertexes];
             for (int i = 0; i < numVertexes; ++i)
             {
-                verts[i].X = (float)BitConverter.ToInt16(vertexesLump.Data, i * 2 * sizeof(Int16)) / 16384.0f;
-                verts[i].Z = (float)BitConverter.ToInt16(vertexesLump.Data, i * 2 * sizeof(Int16) + sizeof(Int16)) / 16384.0f;
-                verts[i].Y = 0.0f;
+                short x = BitConverter.ToInt16(vertexesLump.Data, i * 2 * sizeof(Int16));
+                short y = BitConverter.ToInt16(vertexesLump.Data, i * 2 * sizeof(Int16) + sizeof(Int16));
+                MapCoordToVector3(x, y, ref verts[i]);
             }
 
             // Read linedefs:
@@ -158,6 +166,7 @@ namespace jsdoom
                 short v1 = BitConverter.ToInt16(linedefsLump.Data, (i * linedefSize) + (sizeof(short) * 0));
                 short v2 = BitConverter.ToInt16(linedefsLump.Data, (i * linedefSize) + (sizeof(short) * 1));
                 short flags = BitConverter.ToInt16(linedefsLump.Data, (i * linedefSize) + (sizeof(short) * 2));
+                // ML_DONTSHOW
                 //if ((flags & 128) == 128) continue;
 
                 short special = BitConverter.ToInt16(linedefsLump.Data, (i * linedefSize) + (sizeof(short) * 3));
@@ -169,6 +178,26 @@ namespace jsdoom
                 {
                     lines[i * 2 + 0] = (ushort)v1;
                     lines[i * 2 + 1] = (ushort)v2;
+                }
+            }
+
+            // Read things:
+            var thingsLump = lumps[ml + (int)MapLump.THINGS];
+            const int thingSize = sizeof(short) * 5;
+
+            int numThings = thingsLump.Size / thingSize;
+            for (int i = 0; i < numThings; ++i)
+            {
+                short x = BitConverter.ToInt16(thingsLump.Data, (i * thingSize) + (sizeof(short) * 0));
+                short y = BitConverter.ToInt16(thingsLump.Data, (i * thingSize) + (sizeof(short) * 1));
+                short angle = BitConverter.ToInt16(thingsLump.Data, (i * thingSize) + (sizeof(short) * 2));
+                short type = BitConverter.ToInt16(thingsLump.Data, (i * thingSize) + (sizeof(short) * 3));
+                short options = BitConverter.ToInt16(thingsLump.Data, (i * thingSize) + (sizeof(short) * 4));
+
+                // Player #1 start:
+                if (type == 1)
+                {
+                    MapCoordToVector3(x, y, ref centerPos);
                 }
             }
 
@@ -234,9 +263,11 @@ namespace jsdoom
             GL.ClearColor(Color4.Black);
             GL.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit);
 
-            cameraRotation = (cameraRotation < 360f) ? (cameraRotation + 0.25f * (float)e.Time) : 0f;
-            Matrix4.CreateRotationY(cameraRotation, out matrixModelview);
-            matrixModelview *= Matrix4.LookAt(cameraDistance, 0.15f, -cameraDistance, 0f, 0f, 0f, 0f, 1f, 0f);
+            cameraRotation = (cameraRotation < 360f) ? (cameraRotation + 20f * (float)e.Time) : 0f;
+            //Matrix4.CreateRotationY(cameraRotation, out matrixModelview);
+            var eye = centerPos + new Vector3(cameraDistance * (float)Math.Cos(cameraRotation * Math.PI / 180.0), 0.25f, cameraDistance * (float)Math.Sin(cameraRotation * Math.PI / 180.0));
+            var up = new Vector3(0f, 1f, 0f);
+            matrixModelview = Matrix4.LookAt(eye, centerPos, up);
             GL.MatrixMode(MatrixMode.Modelview);
             GL.LoadMatrix(ref matrixModelview);
 
