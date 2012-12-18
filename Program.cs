@@ -10,7 +10,8 @@ namespace jsdoom
     {
         static void Main(string[] args)
         {
-            new MainWindow().Run(60, 60);
+            using (var game = new MainWindow())
+                game.Run(60, 60);
         }
     }
 }
