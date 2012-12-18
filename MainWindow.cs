@@ -29,10 +29,11 @@ namespace jsdoom
 
         Matrix4 matrixProjection, matrixModelview;
         float cameraRotation = 0f;
-        float cameraDistance = 0.02f;
+        float cameraDistance = 0.2f;
         private int[] vboIds;
         private Vector3[] verts;
         private bool setup;
+        private ushort[] lines;
 
         public MainWindow()
             : base()
@@ -132,23 +133,44 @@ namespace jsdoom
                 return;
             }
 
-            // Do a test render of all linedefs
-            vboIds = new int[2];
             int ml = FindLump(lumps, "map01");
 
-            // Read vertices into a VBO:
+            // Read vertices:
             var vertexesLump = lumps[ml + (int)MapLump.VERTEXES];
             int numVertexes = vertexesLump.Size / (2 + 2);
             verts = new Vector3[numVertexes];
             for (int i = 0; i < numVertexes; ++i)
             {
-                verts[i].X = (float)BitConverter.ToInt16(vertexesLump.Data, i * 2 + 0) / 8192.0f;
-                verts[i].Z = (float)BitConverter.ToInt16(vertexesLump.Data, i * 2 + sizeof(Int16)) / 8192.0f;
+                verts[i].X = (float)BitConverter.ToInt16(vertexesLump.Data, i * 2 * sizeof(Int16)) / 16384.0f;
+                verts[i].Z = (float)BitConverter.ToInt16(vertexesLump.Data, i * 2 * sizeof(Int16) + sizeof(Int16)) / 16384.0f;
                 verts[i].Y = 0.0f;
             }
 
             // Read linedefs:
-            //var linedefsLump = lumps[ml + (int)MapLump.LINEDEFS];
+            var linedefsLump = lumps[ml + (int)MapLump.LINEDEFS];
+
+            const int linedefSize = sizeof(short) * 7;
+            int numLineDefs = linedefsLump.Size / linedefSize;
+
+            lines = new ushort[numLineDefs * 2];
+            for (int i = 0; i < numLineDefs; ++i)
+            {
+                short v1 = BitConverter.ToInt16(linedefsLump.Data, (i * linedefSize) + (sizeof(short) * 0));
+                short v2 = BitConverter.ToInt16(linedefsLump.Data, (i * linedefSize) + (sizeof(short) * 1));
+                short flags = BitConverter.ToInt16(linedefsLump.Data, (i * linedefSize) + (sizeof(short) * 2));
+                //if ((flags & 128) == 128) continue;
+
+                short special = BitConverter.ToInt16(linedefsLump.Data, (i * linedefSize) + (sizeof(short) * 3));
+                short tag = BitConverter.ToInt16(linedefsLump.Data, (i * linedefSize) + (sizeof(short) * 4));
+                short sidenum0 = BitConverter.ToInt16(linedefsLump.Data, (i * linedefSize) + (sizeof(short) * 5));
+                short sidenum1 = BitConverter.ToInt16(linedefsLump.Data, (i * linedefSize) + (sizeof(short) * 6));
+
+                unchecked
+                {
+                    lines[i * 2 + 0] = (ushort)v1;
+                    lines[i * 2 + 1] = (ushort)v2;
+                }
+            }
 
             while (true)
             {
@@ -187,12 +209,21 @@ namespace jsdoom
                 GL.Enable(EnableCap.PointSmooth);
                 GL.Enable(EnableCap.PointSprite);
 
-                // GL_TRUE
-                GL.TexEnv(TextureEnvTarget.PointSprite, TextureEnvParameter.CoordReplace, 1);
+                GL.TexEnv(TextureEnvTarget.PointSprite, TextureEnvParameter.CoordReplace, 1 /* GL_TRUE */);
 
-                GL.GenBuffers(1, vboIds);
+                GL.EnableClientState(ArrayCap.VertexArray);
+
+                vboIds = new int[2];
+                GL.GenBuffers(2, vboIds);
+
                 GL.BindBuffer(BufferTarget.ArrayBuffer, vboIds[0]);
                 GL.BufferData(BufferTarget.ArrayBuffer, new IntPtr(verts.Length * Vector3.SizeInBytes), verts, BufferUsageHint.StaticDraw);
+
+                GL.BindBuffer(BufferTarget.ElementArrayBuffer, vboIds[1]);
+                GL.BufferData(BufferTarget.ElementArrayBuffer, new IntPtr(lines.Length * sizeof(ushort)), lines, BufferUsageHint.StaticDraw);
+
+                GL.BindBuffer(BufferTarget.ArrayBuffer, 0);
+                GL.BindBuffer(BufferTarget.ElementArrayBuffer, 0);
                 setup = true;
             }
             rendered.Set();
@@ -203,18 +234,23 @@ namespace jsdoom
             GL.ClearColor(Color4.Black);
             GL.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit);
 
-            cameraRotation = (cameraRotation < 360f) ? (cameraRotation + 1f * (float)e.Time) : 0f;
+            cameraRotation = (cameraRotation < 360f) ? (cameraRotation + 0.25f * (float)e.Time) : 0f;
             Matrix4.CreateRotationY(cameraRotation, out matrixModelview);
-            matrixModelview *= Matrix4.LookAt(cameraDistance, 0.01f, -cameraDistance, 0f, 0f, 0f, 0f, 1f, 0f);
+            matrixModelview *= Matrix4.LookAt(cameraDistance, 0.15f, -cameraDistance, 0f, 0f, 0f, 0f, 1f, 0f);
             GL.MatrixMode(MatrixMode.Modelview);
             GL.LoadMatrix(ref matrixModelview);
 
             GL.Color4(Color4.White);
 
-            GL.EnableClientState(ArrayCap.VertexArray);
             GL.BindBuffer(BufferTarget.ArrayBuffer, vboIds[0]);
             GL.VertexPointer(3, VertexPointerType.Float, 0, 0);
+
             GL.DrawArrays(BeginMode.Points, 0, verts.Length);
+
+            GL.Color4(Color4.Red);
+
+            GL.BindBuffer(BufferTarget.ElementArrayBuffer, vboIds[1]);
+            GL.DrawElements(BeginMode.Lines, lines.Length, DrawElementsType.UnsignedShort, 0);
 
             Context.SwapBuffers();
         }
