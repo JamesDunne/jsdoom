@@ -46,7 +46,8 @@ namespace jsdoom
         Matrix4 matrixProjection, matrixModelview;
         Vector3 centerPos;
         float cameraRotation = 0f;
-        float cameraDistance = 0.45f;
+        const float cameraDistance = 0.6f;
+        const float cameraHeight = 0.5f;
 
         int[] vboIds;
         bool setup;
@@ -209,11 +210,13 @@ namespace jsdoom
             }
         }
 
+        const float scale = 4096f;
+
         static void MapCoordToVector3(int x, int y, int z, out Vector3 vec)
         {
-            vec.X = x / 8192f;
-            vec.Y = z / 8192f;
-            vec.Z = -y / 8192f;
+            vec.X = x / scale;
+            vec.Y = z / scale;
+            vec.Z = -y / scale;
         }
 
         static void MapCoordToVector3(List<Vertex3> verts, int i, out Vector3 vec)
@@ -227,7 +230,7 @@ namespace jsdoom
 
             try
             {
-                using (var iwad = File.Open(@"E:\Steam\steamapps\common\DOOM 3 BFG Edition\base\wads\DOOM2.WAD", FileMode.Open, FileAccess.Read, FileShare.Read))
+                using (var iwad = File.Open(@"E:\Steam\steamapps\common\DOOM 3 BFG Edition\base\wads\DOOM.WAD", FileMode.Open, FileAccess.Read, FileShare.Read))
                 {
                     byte[] rec = new byte[16];
                     await iwad.ReadAsync(rec, 0, 12);
@@ -272,7 +275,7 @@ namespace jsdoom
                 return;
             }
 
-            int ml = FindLump(lumps, "map01");
+            int ml = FindLump(lumps, "e1m1");
 
             // Read vertices:
             var vertexesLump = lumps[ml + (int)MapLump.VERTEXES];
@@ -357,17 +360,65 @@ namespace jsdoom
                         // One-sided:
                         side1 = null;
 
+#if true
                         quads.Add(new Quad(
                             verts.AddReturnIndex(new Vertex3(vertexes[v1], side0.Sector.Floorheight)),
                             verts.AddReturnIndex(new Vertex3(vertexes[v1], side0.Sector.Ceilingheight)),
                             verts.AddReturnIndex(new Vertex3(vertexes[v2], side0.Sector.Ceilingheight)),
                             verts.AddReturnIndex(new Vertex3(vertexes[v2], side0.Sector.Floorheight))
                         ));
+#endif
                     }
                     else
                     {
                         // Two-sided:
                         side1 = sidedefs[sidenum1];
+
+                        if (side1.Sector.Floorheight < side0.Sector.Floorheight)
+                        {
+#if true
+                            quads.Add(new Quad(
+                                verts.AddReturnIndex(new Vertex3(vertexes[v1], side0.Sector.Floorheight)),
+                                verts.AddReturnIndex(new Vertex3(vertexes[v1], side1.Sector.Floorheight)),
+                                verts.AddReturnIndex(new Vertex3(vertexes[v2], side1.Sector.Floorheight)),
+                                verts.AddReturnIndex(new Vertex3(vertexes[v2], side0.Sector.Floorheight))
+                            ));
+#endif
+                        }
+                        else if (side1.Sector.Floorheight >= side0.Sector.Floorheight)
+                        {
+#if true
+                            quads.Add(new Quad(
+                                verts.AddReturnIndex(new Vertex3(vertexes[v1], side0.Sector.Floorheight)),
+                                verts.AddReturnIndex(new Vertex3(vertexes[v1], side1.Sector.Floorheight)),
+                                verts.AddReturnIndex(new Vertex3(vertexes[v2], side1.Sector.Floorheight)),
+                                verts.AddReturnIndex(new Vertex3(vertexes[v2], side0.Sector.Floorheight))
+                            ));
+#endif
+                        }
+
+                        if (side1.Sector.Ceilingheight < side0.Sector.Ceilingheight)
+                        {
+#if true
+                            quads.Add(new Quad(
+                                verts.AddReturnIndex(new Vertex3(vertexes[v1], side1.Sector.Ceilingheight)),
+                                verts.AddReturnIndex(new Vertex3(vertexes[v1], side0.Sector.Ceilingheight)),
+                                verts.AddReturnIndex(new Vertex3(vertexes[v2], side0.Sector.Ceilingheight)),
+                                verts.AddReturnIndex(new Vertex3(vertexes[v2], side1.Sector.Ceilingheight))
+                            ));
+#endif
+                        }
+                        else if (side1.Sector.Ceilingheight >= side0.Sector.Ceilingheight)
+                        {
+#if true
+                            quads.Add(new Quad(
+                                verts.AddReturnIndex(new Vertex3(vertexes[v1], side0.Sector.Ceilingheight)),
+                                verts.AddReturnIndex(new Vertex3(vertexes[v1], side1.Sector.Ceilingheight)),
+                                verts.AddReturnIndex(new Vertex3(vertexes[v2], side1.Sector.Ceilingheight)),
+                                verts.AddReturnIndex(new Vertex3(vertexes[v2], side0.Sector.Ceilingheight))
+                            ));
+#endif
+                        }
                     }
                 }
                 else
@@ -442,6 +493,15 @@ namespace jsdoom
             {
                 GL.Enable(EnableCap.PointSmooth);
                 GL.Enable(EnableCap.PointSprite);
+                GL.Enable(EnableCap.DepthTest);
+                GL.Enable(EnableCap.AlphaTest);
+                GL.Enable(EnableCap.Blend);
+                GL.BlendFunc(BlendingFactorSrc.SrcAlpha, BlendingFactorDest.OneMinusSrcAlpha);
+
+                GL.FrontFace(FrontFaceDirection.Cw);
+                GL.CullFace(CullFaceMode.Back);
+                // Don't fill back faces:
+                //GL.PolygonMode(MaterialFace.Back, PolygonMode.Line);
 
                 GL.TexEnv(TextureEnvTarget.PointSprite, TextureEnvParameter.CoordReplace, 1 /* GL_TRUE */);
 
@@ -465,13 +525,12 @@ namespace jsdoom
             cameraRotation = (cameraRotation < 360f) ? (cameraRotation + 20f * (float)e.Time) : 0f;
 
             //GL.ClearColor(rendering.bg);
-            GL.Enable(EnableCap.DepthTest);
 
             GL.ClearColor(Color4.Black);
             GL.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit);
 
             //Matrix4.CreateRotationY(cameraRotation, out matrixModelview);
-            var eye = centerPos + new Vector3(cameraDistance * (float)Math.Cos(cameraRotation * Math.PI / 180.0), 0.25f, cameraDistance * (float)Math.Sin(cameraRotation * Math.PI / 180.0));
+            var eye = centerPos + new Vector3(cameraDistance * (float)Math.Cos(cameraRotation * Math.PI / 180.0), cameraHeight, cameraDistance * (float)Math.Sin(cameraRotation * Math.PI / 180.0));
             var up = new Vector3(0f, 1f, 0f);
             matrixModelview = Matrix4.LookAt(eye, centerPos, up);
             GL.MatrixMode(MatrixMode.Modelview);
@@ -484,8 +543,9 @@ namespace jsdoom
 
             GL.DrawArrays(BeginMode.Points, 0, quadVerts.Length);
 
-            GL.Color4(Color4.Red);
-            GL.PolygonMode(MaterialFace.FrontAndBack, PolygonMode.Line);
+            var red = Color4.Red;
+            red.A = 0.5f;
+            GL.Color4(red);
 
             GL.BindBuffer(BufferTarget.ElementArrayBuffer, vboIds[1]);
             GL.DrawElements(BeginMode.Quads, quadIndices.Length * 4, DrawElementsType.UnsignedInt, 0);
