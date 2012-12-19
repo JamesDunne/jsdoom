@@ -275,7 +275,7 @@ namespace jsdoom
                 return;
             }
 
-            int ml = FindLump(lumps, "e1m1");
+            int ml = FindLump(lumps, "e4m1");
 
             // Read vertices:
             var vertexesLump = lumps[ml + (int)MapLump.VERTEXES];
@@ -360,14 +360,12 @@ namespace jsdoom
                         // One-sided:
                         side1 = null;
 
-#if true
                         quads.Add(new Quad(
                             verts.AddReturnIndex(new Vertex3(vertexes[v1], side0.Sector.Floorheight)),
                             verts.AddReturnIndex(new Vertex3(vertexes[v1], side0.Sector.Ceilingheight)),
                             verts.AddReturnIndex(new Vertex3(vertexes[v2], side0.Sector.Ceilingheight)),
                             verts.AddReturnIndex(new Vertex3(vertexes[v2], side0.Sector.Floorheight))
                         ));
-#endif
                     }
                     else
                     {
@@ -376,48 +374,40 @@ namespace jsdoom
 
                         if (side1.Sector.Floorheight < side0.Sector.Floorheight)
                         {
-#if true
                             quads.Add(new Quad(
                                 verts.AddReturnIndex(new Vertex3(vertexes[v1], side0.Sector.Floorheight)),
                                 verts.AddReturnIndex(new Vertex3(vertexes[v1], side1.Sector.Floorheight)),
                                 verts.AddReturnIndex(new Vertex3(vertexes[v2], side1.Sector.Floorheight)),
                                 verts.AddReturnIndex(new Vertex3(vertexes[v2], side0.Sector.Floorheight))
                             ));
-#endif
                         }
                         else if (side1.Sector.Floorheight >= side0.Sector.Floorheight)
                         {
-#if true
                             quads.Add(new Quad(
                                 verts.AddReturnIndex(new Vertex3(vertexes[v1], side0.Sector.Floorheight)),
                                 verts.AddReturnIndex(new Vertex3(vertexes[v1], side1.Sector.Floorheight)),
                                 verts.AddReturnIndex(new Vertex3(vertexes[v2], side1.Sector.Floorheight)),
                                 verts.AddReturnIndex(new Vertex3(vertexes[v2], side0.Sector.Floorheight))
                             ));
-#endif
                         }
 
                         if (side1.Sector.Ceilingheight < side0.Sector.Ceilingheight)
                         {
-#if true
                             quads.Add(new Quad(
                                 verts.AddReturnIndex(new Vertex3(vertexes[v1], side1.Sector.Ceilingheight)),
                                 verts.AddReturnIndex(new Vertex3(vertexes[v1], side0.Sector.Ceilingheight)),
                                 verts.AddReturnIndex(new Vertex3(vertexes[v2], side0.Sector.Ceilingheight)),
                                 verts.AddReturnIndex(new Vertex3(vertexes[v2], side1.Sector.Ceilingheight))
                             ));
-#endif
                         }
                         else if (side1.Sector.Ceilingheight >= side0.Sector.Ceilingheight)
                         {
-#if true
                             quads.Add(new Quad(
                                 verts.AddReturnIndex(new Vertex3(vertexes[v1], side0.Sector.Ceilingheight)),
                                 verts.AddReturnIndex(new Vertex3(vertexes[v1], side1.Sector.Ceilingheight)),
                                 verts.AddReturnIndex(new Vertex3(vertexes[v2], side1.Sector.Ceilingheight)),
                                 verts.AddReturnIndex(new Vertex3(vertexes[v2], side0.Sector.Ceilingheight))
                             ));
-#endif
                         }
                     }
                 }
