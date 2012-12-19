@@ -46,8 +46,8 @@ namespace jsdoom
         Matrix4 matrixProjection, matrixModelview;
         Vector3 centerPos;
         float cameraRotation = 0f;
-        const float cameraDistance = 0.75f;
-        const float cameraHeight = 0.25f;
+        const float cameraDistance = 0.55f;
+        const float cameraHeight = 0.4f;
 
         int[] vboIds;
         bool setup;
@@ -61,6 +61,10 @@ namespace jsdoom
 
         Quad[] quadIndices;
         Vector3[] quadVerts;
+
+        Polygon[] floorPolys;
+        int[] floorIndices;
+        Vector3[] floorVerts;
 
         public MainWindow()
             : base()
@@ -147,6 +151,18 @@ namespace jsdoom
                 B = b;
                 C = c;
                 D = d;
+            }
+        }
+
+        struct Polygon
+        {
+            public readonly int[] V;
+            public readonly int StartIndex;
+
+            public Polygon(int[] v, int startIndex)
+            {
+                V = v;
+                StartIndex = startIndex;
             }
         }
 
@@ -255,13 +271,18 @@ namespace jsdoom
             MapCoordToVector3(verts[i].X, verts[i].Y, verts[i].Z, out vec);
         }
 
+        static void MapCoordToVector3(Vertex[] verts, int i, int z, out Vector3 vec)
+        {
+            MapCoordToVector3(verts[i].X, verts[i].Y, z, out vec);
+        }
+
         async Task Game()
         {
             Lump[] lumps;
 
             try
             {
-                using (var iwad = File.Open(@"E:\Steam\steamapps\common\DOOM 3 BFG Edition\base\wads\DOOM.WAD", FileMode.Open, FileAccess.Read, FileShare.Read))
+                using (var iwad = File.Open(@"E:\Steam\steamapps\common\DOOM 3 BFG Edition\base\wads\DOOM2.WAD", FileMode.Open, FileAccess.Read, FileShare.Read))
                 {
                     byte[] rec = new byte[16];
                     await iwad.ReadAsync(rec, 0, 12);
@@ -298,7 +319,8 @@ namespace jsdoom
                         lumps[i] = new Lump(name, position, size, data);
                     }
                 }
-                int ml = FindLump(lumps, "e3m7");
+
+                int ml = FindLump(lumps, "map26");
 
                 // Read vertices:
                 var vertexesLump = lumps[ml + (int)MapLump.VERTEXES];
@@ -442,12 +464,15 @@ namespace jsdoom
                     linedefs[i] = new LineDef(v1, v2, flags, special, tag, side0, side1);
                 }
 
+
+                // Generate vectors and quad indices for OpenGL:
                 quadVerts = new Vector3[verts.Count];
                 for (int i = 0; i < verts.Count; ++i)
                 {
                     MapCoordToVector3(verts, i, out quadVerts[i]);
                 }
                 quadIndices = quads.ToArray();
+
 
                 // Read segs:
                 const int segSize = sizeof(short) * 6;
@@ -488,7 +513,58 @@ namespace jsdoom
                     var mysegs = new LineSeg[numsegs];
                     Array.Copy(segs, firstseg, mysegs, 0, numsegs);
                     subsectors[i] = new SubSector(mysegs);
+
+                    // Assert that all line segs in this subsector are in the same sector:
+                    var sector = subsectors[i].Segs[0].Side.Sector;
+                    Debug.Assert(subsectors[i].Segs.All(s => s.Side.Sector == sector));
                 }
+
+
+                // Build floor polygons from subsectors:
+                var fVerts = new List<Vertex3>(numVertexes);
+                var fPolys = new List<Polygon>(numSubsectors);
+                int fIndices = 0;
+                for (int i = 0; i < numSubsectors; ++i)
+                {
+                    //if (subsectors[i].Segs.Length < 2) continue;
+
+                    List<int> pind = new List<int>(subsectors[i].Segs.Length * 2);
+                    for (int j = 0; j < subsectors[i].Segs.Length; ++j)
+                    {
+                        var seg = subsectors[i].Segs[j];
+                        if (seg.Side == seg.Line.Side0)
+                        {
+                            pind.Add(fVerts.AddReturnIndex(new Vertex3(vertexes[seg.V1], seg.Side.Sector.Floorheight)));
+                            pind.Add(fVerts.AddReturnIndex(new Vertex3(vertexes[seg.V2], seg.Side.Sector.Floorheight)));
+                        }
+                        else
+                        {
+                            pind.Add(fVerts.AddReturnIndex(new Vertex3(vertexes[seg.V2], seg.Side.Sector.Floorheight)));
+                            pind.Add(fVerts.AddReturnIndex(new Vertex3(vertexes[seg.V1], seg.Side.Sector.Floorheight)));
+                        }
+                    }
+
+                    fPolys.Add(new Polygon(pind.ToArray(), fIndices));
+                    fIndices += pind.Count;
+                }
+
+                floorVerts = new Vector3[fVerts.Count];
+                for (int i = 0; i < fVerts.Count; ++i)
+                {
+                    MapCoordToVector3(fVerts, i, out floorVerts[i]);
+                }
+
+                floorPolys = fPolys.ToArray();
+                floorIndices = new int[fIndices];
+                int n = 0;
+                for (int i = 0; i < floorPolys.Length; ++i)
+                {
+                    var v = floorPolys[i].V;
+                    Debug.Assert(floorPolys[i].StartIndex == n);
+                    Array.Copy(v, 0, floorIndices, n, v.Length);
+                    n += v.Length;
+                }
+
 
                 // Read things:
                 var thingsLump = lumps[ml + (int)MapLump.THINGS];
@@ -542,7 +618,7 @@ namespace jsdoom
         protected override void OnResize(EventArgs e)
         {
             GL.Viewport(0, 0, Width, Height);
-            matrixProjection = Matrix4.CreatePerspectiveFieldOfView((float)Math.PI / 4, Width / (float)Height, 0.001f, 8.0f);
+            matrixProjection = Matrix4.CreatePerspectiveFieldOfView((float)Math.PI / 4, Width / (float)Height, 0.01f, 4.0f);
             GL.MatrixMode(MatrixMode.Projection);
             GL.LoadMatrix(ref matrixProjection);
         }
@@ -560,22 +636,28 @@ namespace jsdoom
                 GL.BlendFunc(BlendingFactorSrc.SrcAlpha, BlendingFactorDest.OneMinusSrcAlpha);
 
                 GL.FrontFace(FrontFaceDirection.Cw);
-                GL.CullFace(CullFaceMode.Back);
+                //GL.CullFace(CullFaceMode.Back);
                 // Don't fill back faces:
-                //GL.PolygonMode(MaterialFace.Back, PolygonMode.Line);
+                GL.PolygonMode(MaterialFace.Back, PolygonMode.Line);
 
                 GL.TexEnv(TextureEnvTarget.PointSprite, TextureEnvParameter.CoordReplace, 1 /* GL_TRUE */);
 
                 GL.EnableClientState(ArrayCap.VertexArray);
 
-                vboIds = new int[2];
-                GL.GenBuffers(2, vboIds);
+                vboIds = new int[4];
+                GL.GenBuffers(4, vboIds);
 
                 GL.BindBuffer(BufferTarget.ArrayBuffer, vboIds[0]);
                 GL.BufferData(BufferTarget.ArrayBuffer, new IntPtr(quadVerts.Length * Vector3.SizeInBytes), quadVerts, BufferUsageHint.StaticDraw);
 
                 GL.BindBuffer(BufferTarget.ElementArrayBuffer, vboIds[1]);
-                GL.BufferData(BufferTarget.ElementArrayBuffer, new IntPtr(quadIndices.Length * sizeof(int) * 4), quadIndices, BufferUsageHint.StaticDraw);
+                GL.BufferData(BufferTarget.ElementArrayBuffer, new IntPtr(quadIndices.Length * (sizeof(int) * 4)), quadIndices, BufferUsageHint.StaticDraw);
+
+                GL.BindBuffer(BufferTarget.ArrayBuffer, vboIds[2]);
+                GL.BufferData(BufferTarget.ArrayBuffer, new IntPtr(floorVerts.Length * Vector3.SizeInBytes), floorVerts, BufferUsageHint.StaticDraw);
+
+                GL.BindBuffer(BufferTarget.ElementArrayBuffer, vboIds[3]);
+                GL.BufferData(BufferTarget.ElementArrayBuffer, new IntPtr(floorIndices.Length * sizeof(int)), floorIndices, BufferUsageHint.StaticDraw);
 
                 GL.BindBuffer(BufferTarget.ArrayBuffer, 0);
                 GL.BindBuffer(BufferTarget.ElementArrayBuffer, 0);
@@ -596,13 +678,16 @@ namespace jsdoom
             GL.MatrixMode(MatrixMode.Modelview);
             GL.LoadMatrix(ref matrixModelview);
 
+#if true
             GL.Color4(Color4.White);
 
             GL.BindBuffer(BufferTarget.ArrayBuffer, vboIds[0]);
             GL.VertexPointer(3, VertexPointerType.Float, 0, 0);
 
             GL.DrawArrays(BeginMode.Points, 0, quadVerts.Length);
+#endif
 
+#if true
             // Draw transparent walls so we can see a bit more:
             var wallColor = Color4.Blue;
             wallColor.A = 0.25f;
@@ -610,6 +695,38 @@ namespace jsdoom
 
             GL.BindBuffer(BufferTarget.ElementArrayBuffer, vboIds[1]);
             GL.DrawElements(BeginMode.Quads, quadIndices.Length * 4, DrawElementsType.UnsignedInt, 0);
+#endif
+
+            // Draw floor polygons:
+#if true
+            GL.BindBuffer(BufferTarget.ArrayBuffer, vboIds[2]);
+            GL.VertexPointer(3, VertexPointerType.Float, 0, 0);
+
+            GL.Color4(Color4.White);
+
+            GL.DrawArrays(BeginMode.Points, 0, floorVerts.Length);
+
+            var floorColor = Color4.Red;
+            floorColor.A = 0.25f;
+            GL.Color4(floorColor);
+
+#if false
+            GL.BindBuffer(BufferTarget.ElementArrayBuffer, vboIds[3]);
+            for (int i = 0; i < 24; ++i)
+            {
+                GL.DrawElements(BeginMode.Lines, floorPolys[i].V.Length, DrawElementsType.UnsignedInt, floorPolys[i].V);
+            }
+#else
+            for (int i = 0; i < floorPolys.Length; ++i)
+            {
+                GL.Begin(BeginMode.Lines);
+                for (int j = 0; j < floorPolys[i].V.Length; ++j) {
+                    GL.Vertex3(floorVerts[j + floorPolys[i].StartIndex]);
+                }
+                GL.End();
+            }
+#endif
+#endif
 
             Context.SwapBuffers();
         }
