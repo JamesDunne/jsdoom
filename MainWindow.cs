@@ -46,8 +46,8 @@ namespace jsdoom
         Matrix4 matrixProjection, matrixModelview;
         Vector3 centerPos;
         float cameraRotation = 0f;
-        const float cameraDistance = 0.6f;
-        const float cameraHeight = 0.5f;
+        const float cameraDistance = 0.75f;
+        const float cameraHeight = 0.25f;
 
         int[] vboIds;
         bool setup;
@@ -56,6 +56,8 @@ namespace jsdoom
         LineDef[] linedefs;
         SideDef[] sidedefs;
         Sector[] sectors;
+        LineSeg[] segs;
+        SubSector[] subsectors;
 
         Quad[] quadIndices;
         Vector3[] quadVerts;
@@ -170,6 +172,16 @@ namespace jsdoom
             }
         }
 
+        class SubSector
+        {
+            public readonly LineSeg[] Segs;
+
+            public SubSector(LineSeg[] segs)
+            {
+                Segs = segs;
+            }
+        }
+
         class SideDef
         {
             public readonly int Textureoffset;
@@ -207,6 +219,25 @@ namespace jsdoom
                 Tag = tag;
                 Side0 = side0;
                 Side1 = side1;
+            }
+        }
+
+        class LineSeg
+        {
+            public readonly int V1, V2;
+            public readonly int Angle;
+            public readonly LineDef Line;
+            public readonly SideDef Side;
+            public readonly int Offset;
+
+            public LineSeg(int v1, int v2, int angle, LineDef line, SideDef side, int offset)
+            {
+                V1 = v1;
+                V2 = v2;
+                Angle = angle;
+                Line = line;
+                Side = side;
+                Offset = offset;
             }
         }
 
@@ -267,198 +298,238 @@ namespace jsdoom
                         lumps[i] = new Lump(name, position, size, data);
                     }
                 }
+                int ml = FindLump(lumps, "e3m7");
+
+                // Read vertices:
+                var vertexesLump = lumps[ml + (int)MapLump.VERTEXES];
+                int numVertexes = vertexesLump.Size / (2 + 2);
+                vertexes = new Vertex[numVertexes];
+                for (int i = 0; i < numVertexes; ++i)
+                {
+                    short x = BitConverter.ToInt16(vertexesLump.Data, i * 2 * sizeof(Int16));
+                    short y = BitConverter.ToInt16(vertexesLump.Data, i * 2 * sizeof(Int16) + sizeof(Int16));
+
+                    vertexes[i] = new Vertex(x, y);
+                }
+
+                // Read sectors:
+                var sectorsLump = lumps[ml + (int)MapLump.SECTORS];
+
+                const int sectorSize = (sizeof(short) * 5) + (8 * 2);
+                int numSectors = sectorsLump.Size / sectorSize;
+
+                sectors = new Sector[numSectors];
+                for (int i = 0; i < numSectors; ++i)
+                {
+                    short floorheight = BitConverter.ToInt16(sectorsLump.Data, (i * sectorSize) + (sizeof(short) * 0));
+                    short ceilingheight = BitConverter.ToInt16(sectorsLump.Data, (i * sectorSize) + (sizeof(short) * 1));
+                    string floorpic = Encoding.ASCII.GetString(sectorsLump.Data, (i * sectorSize) + 0 + (sizeof(short) * 2), 8).ASCIIZ();
+                    string ceilingpic = Encoding.ASCII.GetString(sectorsLump.Data, (i * sectorSize) + 8 + (sizeof(short) * 2), 8).ASCIIZ();
+                    short lightlevel = BitConverter.ToInt16(sectorsLump.Data, (i * sectorSize) + 16 + (sizeof(short) * 2));
+                    short special = BitConverter.ToInt16(sectorsLump.Data, (i * sectorSize) + 16 + (sizeof(short) * 3));
+                    short tag = BitConverter.ToInt16(sectorsLump.Data, (i * sectorSize) + 16 + (sizeof(short) * 4));
+
+                    sectors[i] = new Sector(floorheight, ceilingheight, floorpic, ceilingpic, lightlevel, special, tag);
+                }
+
+                // Read sidedefs:
+                var sidedefsLump = lumps[ml + (int)MapLump.SIDEDEFS];
+
+                const int sidedefSize = (sizeof(short) * 3) + (8 * 3);
+                int numSidedefs = sidedefsLump.Size / sidedefSize;
+
+                sidedefs = new SideDef[numSidedefs];
+                for (int i = 0; i < numSidedefs; ++i)
+                {
+                    short textureoffset = BitConverter.ToInt16(sidedefsLump.Data, (i * sidedefSize) + (sizeof(short) * 0));
+                    short rowoffset = BitConverter.ToInt16(sidedefsLump.Data, (i * sidedefSize) + (sizeof(short) * 1));
+                    string toptexture = Encoding.ASCII.GetString(sidedefsLump.Data, (i * sidedefSize) + 0 + (sizeof(short) * 2), 8).ASCIIZ();
+                    string bottomtexture = Encoding.ASCII.GetString(sidedefsLump.Data, (i * sidedefSize) + 8 + (sizeof(short) * 2), 8).ASCIIZ();
+                    string midtexture = Encoding.ASCII.GetString(sidedefsLump.Data, (i * sidedefSize) + 16 + (sizeof(short) * 2), 8).ASCIIZ();
+                    // Front sector, towards viewer.
+                    short sector = BitConverter.ToInt16(sidedefsLump.Data, (i * sidedefSize) + 24 + (sizeof(short) * 2));
+
+                    sidedefs[i] = new SideDef(textureoffset, rowoffset, toptexture, bottomtexture, midtexture, sectors[sector]);
+                }
+
+                // Read linedefs:
+                var linedefsLump = lumps[ml + (int)MapLump.LINEDEFS];
+
+                const int linedefSize = sizeof(short) * 7;
+                int numLineDefs = linedefsLump.Size / linedefSize;
+
+                linedefs = new LineDef[numLineDefs];
+
+                var verts = new List<Vertex3>(numVertexes * 6);
+                var quads = new List<Quad>(numLineDefs * 3);
+                for (int i = 0; i < numLineDefs; ++i)
+                {
+                    short v1 = BitConverter.ToInt16(linedefsLump.Data, (i * linedefSize) + (sizeof(short) * 0));
+                    short v2 = BitConverter.ToInt16(linedefsLump.Data, (i * linedefSize) + (sizeof(short) * 1));
+                    short flags = BitConverter.ToInt16(linedefsLump.Data, (i * linedefSize) + (sizeof(short) * 2));
+                    short special = BitConverter.ToInt16(linedefsLump.Data, (i * linedefSize) + (sizeof(short) * 3));
+                    short tag = BitConverter.ToInt16(linedefsLump.Data, (i * linedefSize) + (sizeof(short) * 4));
+                    short sidenum0 = BitConverter.ToInt16(linedefsLump.Data, (i * linedefSize) + (sizeof(short) * 5));
+                    short sidenum1 = BitConverter.ToInt16(linedefsLump.Data, (i * linedefSize) + (sizeof(short) * 6));
+
+                    // Look up SideDefs:
+                    SideDef side0, side1;
+                    if (sidenum0 >= 0)
+                    {
+                        side0 = sidedefs[sidenum0];
+
+                        if (sidenum1 < 0)
+                        {
+                            // One-sided:
+                            side1 = null;
+
+                            quads.Add(new Quad(
+                                verts.AddReturnIndex(new Vertex3(vertexes[v1], side0.Sector.Floorheight)),
+                                verts.AddReturnIndex(new Vertex3(vertexes[v1], side0.Sector.Ceilingheight)),
+                                verts.AddReturnIndex(new Vertex3(vertexes[v2], side0.Sector.Ceilingheight)),
+                                verts.AddReturnIndex(new Vertex3(vertexes[v2], side0.Sector.Floorheight))
+                            ));
+                        }
+                        else
+                        {
+                            // Two-sided:
+                            side1 = sidedefs[sidenum1];
+
+                            if (side1.Sector.Floorheight < side0.Sector.Floorheight)
+                            {
+                                quads.Add(new Quad(
+                                    verts.AddReturnIndex(new Vertex3(vertexes[v1], side0.Sector.Floorheight)),
+                                    verts.AddReturnIndex(new Vertex3(vertexes[v1], side1.Sector.Floorheight)),
+                                    verts.AddReturnIndex(new Vertex3(vertexes[v2], side1.Sector.Floorheight)),
+                                    verts.AddReturnIndex(new Vertex3(vertexes[v2], side0.Sector.Floorheight))
+                                ));
+                            }
+                            else if (side1.Sector.Floorheight >= side0.Sector.Floorheight)
+                            {
+                                quads.Add(new Quad(
+                                    verts.AddReturnIndex(new Vertex3(vertexes[v1], side0.Sector.Floorheight)),
+                                    verts.AddReturnIndex(new Vertex3(vertexes[v1], side1.Sector.Floorheight)),
+                                    verts.AddReturnIndex(new Vertex3(vertexes[v2], side1.Sector.Floorheight)),
+                                    verts.AddReturnIndex(new Vertex3(vertexes[v2], side0.Sector.Floorheight))
+                                ));
+                            }
+
+                            if (side1.Sector.Ceilingheight < side0.Sector.Ceilingheight)
+                            {
+                                quads.Add(new Quad(
+                                    verts.AddReturnIndex(new Vertex3(vertexes[v1], side1.Sector.Ceilingheight)),
+                                    verts.AddReturnIndex(new Vertex3(vertexes[v1], side0.Sector.Ceilingheight)),
+                                    verts.AddReturnIndex(new Vertex3(vertexes[v2], side0.Sector.Ceilingheight)),
+                                    verts.AddReturnIndex(new Vertex3(vertexes[v2], side1.Sector.Ceilingheight))
+                                ));
+                            }
+                            else if (side1.Sector.Ceilingheight >= side0.Sector.Ceilingheight)
+                            {
+                                quads.Add(new Quad(
+                                    verts.AddReturnIndex(new Vertex3(vertexes[v1], side0.Sector.Ceilingheight)),
+                                    verts.AddReturnIndex(new Vertex3(vertexes[v1], side1.Sector.Ceilingheight)),
+                                    verts.AddReturnIndex(new Vertex3(vertexes[v2], side1.Sector.Ceilingheight)),
+                                    verts.AddReturnIndex(new Vertex3(vertexes[v2], side0.Sector.Ceilingheight))
+                                ));
+                            }
+                        }
+                    }
+                    else
+                    {
+                        throw new Exception("FAIL");
+                    }
+
+                    linedefs[i] = new LineDef(v1, v2, flags, special, tag, side0, side1);
+                }
+
+                quadVerts = new Vector3[verts.Count];
+                for (int i = 0; i < verts.Count; ++i)
+                {
+                    MapCoordToVector3(verts, i, out quadVerts[i]);
+                }
+                quadIndices = quads.ToArray();
+
+                // Read segs:
+                const int segSize = sizeof(short) * 6;
+
+                var segsLump = lumps[ml + (int)MapLump.SEGS];
+                int numSegs = segsLump.Size / segSize;
+
+                segs = new LineSeg[numSegs];
+                for (int i = 0; i < numSegs; ++i)
+                {
+                    short v1 = BitConverter.ToInt16(segsLump.Data, (i * segSize) + (sizeof(short) * 0));
+                    short v2 = BitConverter.ToInt16(segsLump.Data, (i * segSize) + (sizeof(short) * 1));
+                    short angle = BitConverter.ToInt16(segsLump.Data, (i * segSize) + (sizeof(short) * 2));
+                    short linedef = BitConverter.ToInt16(segsLump.Data, (i * segSize) + (sizeof(short) * 3));
+                    short side = BitConverter.ToInt16(segsLump.Data, (i * segSize) + (sizeof(short) * 4));
+                    short offset = BitConverter.ToInt16(segsLump.Data, (i * segSize) + (sizeof(short) * 5));
+
+                    var ldef = linedefs[linedef];
+                    var sdef = ldef.Side0;
+                    if (side != 0) sdef = ldef.Side1;
+
+                    segs[i] = new LineSeg(v1, v2, angle, ldef, sdef, offset);
+                }
+
+                // Read subsectors:
+                const int subsectorSize = sizeof(short) * 2;
+
+                var subsectorsLump = lumps[ml + (int)MapLump.SSECTORS];
+                var numSubsectors = subsectorsLump.Size / subsectorSize;
+
+                subsectors = new SubSector[numSubsectors];
+                for (int i = 0; i < numSubsectors; ++i)
+                {
+                    short numsegs = BitConverter.ToInt16(subsectorsLump.Data, (i * subsectorSize) + (sizeof(short) * 0));
+                    short firstseg = BitConverter.ToInt16(subsectorsLump.Data, (i * subsectorSize) + (sizeof(short) * 1));
+
+                    // Pull out all the LineSegs for this subsector:
+                    var mysegs = new LineSeg[numsegs];
+                    Array.Copy(segs, firstseg, mysegs, 0, numsegs);
+                    subsectors[i] = new SubSector(mysegs);
+                }
+
+                // Read things:
+                var thingsLump = lumps[ml + (int)MapLump.THINGS];
+                const int thingSize = sizeof(short) * 5;
+
+                int numThings = thingsLump.Size / thingSize;
+                for (int i = 0; i < numThings; ++i)
+                {
+                    short x = BitConverter.ToInt16(thingsLump.Data, (i * thingSize) + (sizeof(short) * 0));
+                    short y = BitConverter.ToInt16(thingsLump.Data, (i * thingSize) + (sizeof(short) * 1));
+                    short angle = BitConverter.ToInt16(thingsLump.Data, (i * thingSize) + (sizeof(short) * 2));
+                    short type = BitConverter.ToInt16(thingsLump.Data, (i * thingSize) + (sizeof(short) * 3));
+                    short options = BitConverter.ToInt16(thingsLump.Data, (i * thingSize) + (sizeof(short) * 4));
+
+                    // Player #1 start:
+                    if (type == 1)
+                    {
+                        MapCoordToVector3(x, y, 0, out centerPos);
+                    }
+                }
+
+                // Game loop:
+                while (true)
+                {
+                    // Create a new Frame to update:
+                    next = new Frame();
+
+                    // Set up the frame state to render:
+                    next.bg = new Color4((float)rnd.NextDouble(), (float)rnd.NextDouble(), (float)rnd.NextDouble(), 1.0f);
+
+                    // Set this as the next frame ready to be rendered:
+                    Interlocked.Exchange(ref ready, next);
+                    // Wait for the frame to be rendered:
+                    rendered.WaitOne(16);
+                }
             }
             catch (Exception ex)
             {
                 Console.WriteLine(ex.ToString());
                 Exit();
                 return;
-            }
-
-            int ml = FindLump(lumps, "e4m1");
-
-            // Read vertices:
-            var vertexesLump = lumps[ml + (int)MapLump.VERTEXES];
-            int numVertexes = vertexesLump.Size / (2 + 2);
-            vertexes = new Vertex[numVertexes];
-            for (int i = 0; i < numVertexes; ++i)
-            {
-                short x = BitConverter.ToInt16(vertexesLump.Data, i * 2 * sizeof(Int16));
-                short y = BitConverter.ToInt16(vertexesLump.Data, i * 2 * sizeof(Int16) + sizeof(Int16));
-
-                vertexes[i] = new Vertex(x, y);
-            }
-
-            // Read sectors:
-            var sectorsLump = lumps[ml + (int)MapLump.SECTORS];
-
-            const int sectorSize = (sizeof(short) * 5) + (8 * 2);
-            int numSectors = sectorsLump.Size / sectorSize;
-
-            sectors = new Sector[numSectors];
-            for (int i = 0; i < numSectors; ++i)
-            {
-                short floorheight = BitConverter.ToInt16(sectorsLump.Data, (i * sectorSize) + (sizeof(short) * 0));
-                short ceilingheight = BitConverter.ToInt16(sectorsLump.Data, (i * sectorSize) + (sizeof(short) * 1));
-                string floorpic = Encoding.ASCII.GetString(sectorsLump.Data, (i * sectorSize) + 0 + (sizeof(short) * 2), 8).ASCIIZ();
-                string ceilingpic = Encoding.ASCII.GetString(sectorsLump.Data, (i * sectorSize) + 8 + (sizeof(short) * 2), 8).ASCIIZ();
-                short lightlevel = BitConverter.ToInt16(sectorsLump.Data, (i * sectorSize) + 16 + (sizeof(short) * 2));
-                short special = BitConverter.ToInt16(sectorsLump.Data, (i * sectorSize) + 16 + (sizeof(short) * 3));
-                short tag = BitConverter.ToInt16(sectorsLump.Data, (i * sectorSize) + 16 + (sizeof(short) * 4));
-
-                sectors[i] = new Sector(floorheight, ceilingheight, floorpic, ceilingpic, lightlevel, special, tag);
-            }
-
-            // Read sidedefs:
-            var sidedefsLump = lumps[ml + (int)MapLump.SIDEDEFS];
-
-            const int sidedefSize = (sizeof(short) * 3) + (8 * 3);
-            int numSidedefs = sidedefsLump.Size / sidedefSize;
-
-            sidedefs = new SideDef[numSidedefs];
-            for (int i = 0; i < numSidedefs; ++i)
-            {
-                short textureoffset = BitConverter.ToInt16(sidedefsLump.Data, (i * sidedefSize) + (sizeof(short) * 0));
-                short rowoffset = BitConverter.ToInt16(sidedefsLump.Data, (i * sidedefSize) + (sizeof(short) * 1));
-                string toptexture = Encoding.ASCII.GetString(sidedefsLump.Data, (i * sidedefSize) + 0 + (sizeof(short) * 2), 8).ASCIIZ();
-                string bottomtexture = Encoding.ASCII.GetString(sidedefsLump.Data, (i * sidedefSize) + 8 + (sizeof(short) * 2), 8).ASCIIZ();
-                string midtexture = Encoding.ASCII.GetString(sidedefsLump.Data, (i * sidedefSize) + 16 + (sizeof(short) * 2), 8).ASCIIZ();
-                // Front sector, towards viewer.
-                short sector = BitConverter.ToInt16(sidedefsLump.Data, (i * sidedefSize) + 24 + (sizeof(short) * 2));
-
-                sidedefs[i] = new SideDef(textureoffset, rowoffset, toptexture, bottomtexture, midtexture, sectors[sector]);
-            }
-
-            // Read linedefs:
-            var linedefsLump = lumps[ml + (int)MapLump.LINEDEFS];
-
-            const int linedefSize = sizeof(short) * 7;
-            int numLineDefs = linedefsLump.Size / linedefSize;
-
-            linedefs = new LineDef[numLineDefs];
-
-            var verts = new List<Vertex3>(numVertexes * 6);
-            var quads = new List<Quad>(numLineDefs * 3);
-            for (int i = 0; i < numLineDefs; ++i)
-            {
-                short v1 = BitConverter.ToInt16(linedefsLump.Data, (i * linedefSize) + (sizeof(short) * 0));
-                short v2 = BitConverter.ToInt16(linedefsLump.Data, (i * linedefSize) + (sizeof(short) * 1));
-                short flags = BitConverter.ToInt16(linedefsLump.Data, (i * linedefSize) + (sizeof(short) * 2));
-                short special = BitConverter.ToInt16(linedefsLump.Data, (i * linedefSize) + (sizeof(short) * 3));
-                short tag = BitConverter.ToInt16(linedefsLump.Data, (i * linedefSize) + (sizeof(short) * 4));
-                short sidenum0 = BitConverter.ToInt16(linedefsLump.Data, (i * linedefSize) + (sizeof(short) * 5));
-                short sidenum1 = BitConverter.ToInt16(linedefsLump.Data, (i * linedefSize) + (sizeof(short) * 6));
-
-                // Look up SideDefs:
-                SideDef side0, side1;
-                if (sidenum0 >= 0)
-                {
-                    side0 = sidedefs[sidenum0];
-
-                    if (sidenum1 < 0)
-                    {
-                        // One-sided:
-                        side1 = null;
-
-                        quads.Add(new Quad(
-                            verts.AddReturnIndex(new Vertex3(vertexes[v1], side0.Sector.Floorheight)),
-                            verts.AddReturnIndex(new Vertex3(vertexes[v1], side0.Sector.Ceilingheight)),
-                            verts.AddReturnIndex(new Vertex3(vertexes[v2], side0.Sector.Ceilingheight)),
-                            verts.AddReturnIndex(new Vertex3(vertexes[v2], side0.Sector.Floorheight))
-                        ));
-                    }
-                    else
-                    {
-                        // Two-sided:
-                        side1 = sidedefs[sidenum1];
-
-                        if (side1.Sector.Floorheight < side0.Sector.Floorheight)
-                        {
-                            quads.Add(new Quad(
-                                verts.AddReturnIndex(new Vertex3(vertexes[v1], side0.Sector.Floorheight)),
-                                verts.AddReturnIndex(new Vertex3(vertexes[v1], side1.Sector.Floorheight)),
-                                verts.AddReturnIndex(new Vertex3(vertexes[v2], side1.Sector.Floorheight)),
-                                verts.AddReturnIndex(new Vertex3(vertexes[v2], side0.Sector.Floorheight))
-                            ));
-                        }
-                        else if (side1.Sector.Floorheight >= side0.Sector.Floorheight)
-                        {
-                            quads.Add(new Quad(
-                                verts.AddReturnIndex(new Vertex3(vertexes[v1], side0.Sector.Floorheight)),
-                                verts.AddReturnIndex(new Vertex3(vertexes[v1], side1.Sector.Floorheight)),
-                                verts.AddReturnIndex(new Vertex3(vertexes[v2], side1.Sector.Floorheight)),
-                                verts.AddReturnIndex(new Vertex3(vertexes[v2], side0.Sector.Floorheight))
-                            ));
-                        }
-
-                        if (side1.Sector.Ceilingheight < side0.Sector.Ceilingheight)
-                        {
-                            quads.Add(new Quad(
-                                verts.AddReturnIndex(new Vertex3(vertexes[v1], side1.Sector.Ceilingheight)),
-                                verts.AddReturnIndex(new Vertex3(vertexes[v1], side0.Sector.Ceilingheight)),
-                                verts.AddReturnIndex(new Vertex3(vertexes[v2], side0.Sector.Ceilingheight)),
-                                verts.AddReturnIndex(new Vertex3(vertexes[v2], side1.Sector.Ceilingheight))
-                            ));
-                        }
-                        else if (side1.Sector.Ceilingheight >= side0.Sector.Ceilingheight)
-                        {
-                            quads.Add(new Quad(
-                                verts.AddReturnIndex(new Vertex3(vertexes[v1], side0.Sector.Ceilingheight)),
-                                verts.AddReturnIndex(new Vertex3(vertexes[v1], side1.Sector.Ceilingheight)),
-                                verts.AddReturnIndex(new Vertex3(vertexes[v2], side1.Sector.Ceilingheight)),
-                                verts.AddReturnIndex(new Vertex3(vertexes[v2], side0.Sector.Ceilingheight))
-                            ));
-                        }
-                    }
-                }
-                else
-                {
-                    throw new Exception("FAIL");
-                }
-
-                linedefs[i] = new LineDef(v1, v2, flags, special, tag, side0, side1);
-            }
-
-            quadVerts = new Vector3[verts.Count];
-            for (int i = 0; i < verts.Count; ++i)
-            {
-                MapCoordToVector3(verts, i, out quadVerts[i]);
-            }
-            quadIndices = quads.ToArray();
-
-            // Read things:
-            var thingsLump = lumps[ml + (int)MapLump.THINGS];
-            const int thingSize = sizeof(short) * 5;
-
-            int numThings = thingsLump.Size / thingSize;
-            for (int i = 0; i < numThings; ++i)
-            {
-                short x = BitConverter.ToInt16(thingsLump.Data, (i * thingSize) + (sizeof(short) * 0));
-                short y = BitConverter.ToInt16(thingsLump.Data, (i * thingSize) + (sizeof(short) * 1));
-                short angle = BitConverter.ToInt16(thingsLump.Data, (i * thingSize) + (sizeof(short) * 2));
-                short type = BitConverter.ToInt16(thingsLump.Data, (i * thingSize) + (sizeof(short) * 3));
-                short options = BitConverter.ToInt16(thingsLump.Data, (i * thingSize) + (sizeof(short) * 4));
-
-                // Player #1 start:
-                if (type == 1)
-                {
-                    MapCoordToVector3(x, y, 0, out centerPos);
-                }
-            }
-
-            // Game loop:
-            while (true)
-            {
-                // Create a new Frame to update:
-                next = new Frame();
-
-                // Set up the frame state to render:
-                next.bg = new Color4((float)rnd.NextDouble(), (float)rnd.NextDouble(), (float)rnd.NextDouble(), 1.0f);
-
-                // Set this as the next frame ready to be rendered:
-                Interlocked.Exchange(ref ready, next);
-                // Wait for the frame to be rendered:
-                rendered.WaitOne(16);
             }
         }
 
@@ -512,10 +583,9 @@ namespace jsdoom
             }
             rendered.Set();
 
-            cameraRotation = (cameraRotation < 360f) ? (cameraRotation + 20f * (float)e.Time) : 0f;
+            cameraRotation = (cameraRotation < 360f) ? (cameraRotation + 15f * (float)e.Time) : 0f;
 
             //GL.ClearColor(rendering.bg);
-
             GL.ClearColor(Color4.Black);
             GL.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit);
 
@@ -533,9 +603,10 @@ namespace jsdoom
 
             GL.DrawArrays(BeginMode.Points, 0, quadVerts.Length);
 
-            var red = Color4.Red;
-            red.A = 0.5f;
-            GL.Color4(red);
+            // Draw transparent walls so we can see a bit more:
+            var wallColor = Color4.Blue;
+            wallColor.A = 0.25f;
+            GL.Color4(wallColor);
 
             GL.BindBuffer(BufferTarget.ElementArrayBuffer, vboIds[1]);
             GL.DrawElements(BeginMode.Quads, quadIndices.Length * 4, DrawElementsType.UnsignedInt, 0);
