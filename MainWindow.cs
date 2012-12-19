@@ -46,8 +46,8 @@ namespace jsdoom
         Matrix4 matrixProjection, matrixModelview;
         Vector3 centerPos;
         float cameraRotation = 0f;
-        const float cameraDistance = 0.55f;
-        const float cameraHeight = 0.4f;
+        const float cameraDistance = 1.2f;
+        const float cameraHeight = 0.75f;
 
         int[] vboIds;
         bool setup;
@@ -527,11 +527,11 @@ namespace jsdoom
                 for (int i = 0; i < numSubsectors; ++i)
                 {
                     //if (subsectors[i].Segs.Length < 2) continue;
-
-                    List<int> pind = new List<int>(subsectors[i].Segs.Length * 2);
-                    for (int j = 0; j < subsectors[i].Segs.Length; ++j)
+                    var sg = subsectors[i].Segs;
+                    List<int> pind = new List<int>(sg.Length * 2);
+                    for (int j = 0; j < sg.Length; ++j)
                     {
-                        var seg = subsectors[i].Segs[j];
+                        var seg = sg[j];
                         if (seg.Side == seg.Line.Side0)
                         {
                             pind.Add(fVerts.AddReturnIndex(new Vertex3(vertexes[seg.V1], seg.Side.Sector.Floorheight)));
@@ -546,6 +546,8 @@ namespace jsdoom
 
                     fPolys.Add(new Polygon(pind.ToArray(), fIndices));
                     fIndices += pind.Count;
+
+
                 }
 
                 floorVerts = new Vector3[fVerts.Count];
@@ -630,11 +632,12 @@ namespace jsdoom
             {
                 GL.Enable(EnableCap.PointSmooth);
                 GL.Enable(EnableCap.PointSprite);
-                GL.Enable(EnableCap.DepthTest);
+                GL.Disable(EnableCap.DepthTest);
                 GL.Enable(EnableCap.AlphaTest);
                 GL.Enable(EnableCap.Blend);
                 GL.BlendFunc(BlendingFactorSrc.SrcAlpha, BlendingFactorDest.OneMinusSrcAlpha);
 
+                // Clockwise is our preferred front-facing order:
                 GL.FrontFace(FrontFaceDirection.Cw);
                 //GL.CullFace(CullFaceMode.Back);
                 // Don't fill back faces:
@@ -644,8 +647,8 @@ namespace jsdoom
 
                 GL.EnableClientState(ArrayCap.VertexArray);
 
-                vboIds = new int[4];
-                GL.GenBuffers(4, vboIds);
+                vboIds = new int[3];
+                GL.GenBuffers(3, vboIds);
 
                 GL.BindBuffer(BufferTarget.ArrayBuffer, vboIds[0]);
                 GL.BufferData(BufferTarget.ArrayBuffer, new IntPtr(quadVerts.Length * Vector3.SizeInBytes), quadVerts, BufferUsageHint.StaticDraw);
@@ -655,9 +658,6 @@ namespace jsdoom
 
                 GL.BindBuffer(BufferTarget.ArrayBuffer, vboIds[2]);
                 GL.BufferData(BufferTarget.ArrayBuffer, new IntPtr(floorVerts.Length * Vector3.SizeInBytes), floorVerts, BufferUsageHint.StaticDraw);
-
-                GL.BindBuffer(BufferTarget.ElementArrayBuffer, vboIds[3]);
-                GL.BufferData(BufferTarget.ElementArrayBuffer, new IntPtr(floorIndices.Length * sizeof(int)), floorIndices, BufferUsageHint.StaticDraw);
 
                 GL.BindBuffer(BufferTarget.ArrayBuffer, 0);
                 GL.BindBuffer(BufferTarget.ElementArrayBuffer, 0);
@@ -671,14 +671,14 @@ namespace jsdoom
             GL.ClearColor(Color4.Black);
             GL.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit);
 
-            //Matrix4.CreateRotationY(cameraRotation, out matrixModelview);
             var eye = centerPos + new Vector3(cameraDistance * (float)Math.Cos(cameraRotation * Math.PI / 180.0), cameraHeight, cameraDistance * (float)Math.Sin(cameraRotation * Math.PI / 180.0));
             var up = new Vector3(0f, 1f, 0f);
             matrixModelview = Matrix4.LookAt(eye, centerPos, up);
             GL.MatrixMode(MatrixMode.Modelview);
             GL.LoadMatrix(ref matrixModelview);
 
-#if true
+#if false
+            // Draw wall points:
             GL.Color4(Color4.White);
 
             GL.BindBuffer(BufferTarget.ArrayBuffer, vboIds[0]);
@@ -690,42 +690,40 @@ namespace jsdoom
 #if true
             // Draw transparent walls so we can see a bit more:
             var wallColor = Color4.Blue;
-            wallColor.A = 0.25f;
+            wallColor.A = 0.15f;
             GL.Color4(wallColor);
 
+            GL.BindBuffer(BufferTarget.ArrayBuffer, vboIds[0]);
+            GL.VertexPointer(3, VertexPointerType.Float, 0, 0);
             GL.BindBuffer(BufferTarget.ElementArrayBuffer, vboIds[1]);
             GL.DrawElements(BeginMode.Quads, quadIndices.Length * 4, DrawElementsType.UnsignedInt, 0);
 #endif
 
-            // Draw floor polygons:
-#if true
+#if false
+            // Draw floor points:
             GL.BindBuffer(BufferTarget.ArrayBuffer, vboIds[2]);
             GL.VertexPointer(3, VertexPointerType.Float, 0, 0);
 
             GL.Color4(Color4.White);
 
             GL.DrawArrays(BeginMode.Points, 0, floorVerts.Length);
+#endif
 
+#if true
+            // Draw floor polygons:
             var floorColor = Color4.Red;
-            floorColor.A = 0.25f;
+            floorColor.A = 0.5f;
             GL.Color4(floorColor);
 
-#if false
-            GL.BindBuffer(BufferTarget.ElementArrayBuffer, vboIds[3]);
-            for (int i = 0; i < 24; ++i)
-            {
-                GL.DrawElements(BeginMode.Lines, floorPolys[i].V.Length, DrawElementsType.UnsignedInt, floorPolys[i].V);
-            }
-#else
+            GL.BindBuffer(BufferTarget.ArrayBuffer, vboIds[2]);
+            GL.VertexPointer(3, VertexPointerType.Float, 0, 0);
+
+            GL.BindBuffer(BufferTarget.ElementArrayBuffer, 0);
             for (int i = 0; i < floorPolys.Length; ++i)
             {
-                GL.Begin(BeginMode.Lines);
-                for (int j = 0; j < floorPolys[i].V.Length; ++j) {
-                    GL.Vertex3(floorVerts[j + floorPolys[i].StartIndex]);
-                }
-                GL.End();
+                var fp = floorPolys[i];
+                GL.DrawElements(BeginMode.Lines, fp.V.Length, DrawElementsType.UnsignedInt, fp.V);
             }
-#endif
 #endif
 
             Context.SwapBuffers();
