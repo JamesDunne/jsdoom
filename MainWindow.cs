@@ -29,6 +29,30 @@ namespace jsdoom
         }
     }
 
+    public class ListSet<T>
+    {
+        readonly List<T> _set;
+
+        public ListSet(int capacity)
+        {
+            if (capacity < 0) throw new ArgumentOutOfRangeException("capacity");
+            _set = new List<T>(capacity);
+        }
+
+        public int AddReturnIndex(T value)
+        {
+            int i = _set.IndexOf(value);
+            if (i >= 0) return i;
+
+            _set.Add(value);
+            return _set.Count - 1;
+        }
+
+        public T this[int index] { get { return _set[index]; } }
+
+        public int Count { get { return _set.Count; } }
+    }
+
     class MainWindow : OpenTK.GameWindow
     {
         Random rnd = new Random();
@@ -64,7 +88,6 @@ namespace jsdoom
 
         Polygon[] floorPolys;
         int[] floorIndices;
-        Vector3[] floorVerts;
 
         public MainWindow()
             : base()
@@ -266,14 +289,9 @@ namespace jsdoom
             vec.Z = -y / scale;
         }
 
-        static void MapCoordToVector3(List<Vertex3> verts, int i, out Vector3 vec)
+        static void MapCoordToVector3(Vertex3 v, out Vector3 vec)
         {
-            MapCoordToVector3(verts[i].X, verts[i].Y, verts[i].Z, out vec);
-        }
-
-        static void MapCoordToVector3(Vertex[] verts, int i, int z, out Vector3 vec)
-        {
-            MapCoordToVector3(verts[i].X, verts[i].Y, z, out vec);
+            MapCoordToVector3(v.X, v.Y, v.Z, out vec);
         }
 
         async Task Game()
@@ -320,7 +338,7 @@ namespace jsdoom
                     }
                 }
 
-                int ml = FindLump(lumps, "map26");
+                int ml = FindLump(lumps, "map01");
 
                 // Read vertices:
                 var vertexesLump = lumps[ml + (int)MapLump.VERTEXES];
@@ -382,7 +400,7 @@ namespace jsdoom
 
                 linedefs = new LineDef[numLineDefs];
 
-                var verts = new List<Vertex3>(numVertexes * 6);
+                var verts = new ListSet<Vertex3>(numVertexes * 4);
                 var quads = new List<Quad>(numLineDefs * 3);
                 for (int i = 0; i < numLineDefs; ++i)
                 {
@@ -464,13 +482,6 @@ namespace jsdoom
                     linedefs[i] = new LineDef(v1, v2, flags, special, tag, side0, side1);
                 }
 
-
-                // Generate vectors and quad indices for OpenGL:
-                quadVerts = new Vector3[verts.Count];
-                for (int i = 0; i < verts.Count; ++i)
-                {
-                    MapCoordToVector3(verts, i, out quadVerts[i]);
-                }
                 quadIndices = quads.ToArray();
 
 
@@ -520,40 +531,49 @@ namespace jsdoom
                 }
 
 
-                // Build floor polygons from subsectors:
-                var fVerts = new List<Vertex3>(numVertexes);
+                // Build floor + ceil polygons from subsectors:
                 var fPolys = new List<Polygon>(numSubsectors);
-                int fIndices = 0;
+                var cPolys = new List<Polygon>(numSubsectors);
+
+                int fIndices = 0, cIndices = 0;
                 for (int i = 0; i < numSubsectors; ++i)
                 {
-                    //if (subsectors[i].Segs.Length < 2) continue;
                     var sg = subsectors[i].Segs;
-                    List<int> pind = new List<int>(sg.Length * 2);
+
+                    List<int> flind = new List<int>(sg.Length * 2);
+                    List<int> ceind = new List<int>(sg.Length * 2);
+
                     for (int j = 0; j < sg.Length; ++j)
                     {
                         var seg = sg[j];
                         if (seg.Side == seg.Line.Side0)
                         {
-                            pind.Add(fVerts.AddReturnIndex(new Vertex3(vertexes[seg.V1], seg.Side.Sector.Floorheight)));
-                            pind.Add(fVerts.AddReturnIndex(new Vertex3(vertexes[seg.V2], seg.Side.Sector.Floorheight)));
+                            flind.Add(verts.AddReturnIndex(new Vertex3(vertexes[seg.V1], seg.Side.Sector.Floorheight)));
+                            flind.Add(verts.AddReturnIndex(new Vertex3(vertexes[seg.V2], seg.Side.Sector.Floorheight)));
+                            ceind.Add(verts.AddReturnIndex(new Vertex3(vertexes[seg.V1], seg.Side.Sector.Ceilingheight)));
+                            ceind.Add(verts.AddReturnIndex(new Vertex3(vertexes[seg.V2], seg.Side.Sector.Ceilingheight)));
                         }
                         else
                         {
-                            pind.Add(fVerts.AddReturnIndex(new Vertex3(vertexes[seg.V2], seg.Side.Sector.Floorheight)));
-                            pind.Add(fVerts.AddReturnIndex(new Vertex3(vertexes[seg.V1], seg.Side.Sector.Floorheight)));
+                            flind.Add(verts.AddReturnIndex(new Vertex3(vertexes[seg.V2], seg.Side.Sector.Floorheight)));
+                            flind.Add(verts.AddReturnIndex(new Vertex3(vertexes[seg.V1], seg.Side.Sector.Floorheight)));
+                            ceind.Add(verts.AddReturnIndex(new Vertex3(vertexes[seg.V2], seg.Side.Sector.Ceilingheight)));
+                            ceind.Add(verts.AddReturnIndex(new Vertex3(vertexes[seg.V1], seg.Side.Sector.Ceilingheight)));
                         }
                     }
 
-                    fPolys.Add(new Polygon(pind.ToArray(), fIndices));
-                    fIndices += pind.Count;
+                    fPolys.Add(new Polygon(flind.ToArray(), fIndices));
+                    fIndices += flind.Count;
 
-
+                    cPolys.Add(new Polygon(ceind.ToArray(), cIndices));
+                    cIndices += ceind.Count;
                 }
 
-                floorVerts = new Vector3[fVerts.Count];
-                for (int i = 0; i < fVerts.Count; ++i)
+                // Generate vectors and quad indices for OpenGL:
+                quadVerts = new Vector3[verts.Count];
+                for (int i = 0; i < verts.Count; ++i)
                 {
-                    MapCoordToVector3(fVerts, i, out floorVerts[i]);
+                    MapCoordToVector3(verts[i], out quadVerts[i]);
                 }
 
                 floorPolys = fPolys.ToArray();
@@ -595,7 +615,7 @@ namespace jsdoom
                     next = new Frame();
 
                     // Set up the frame state to render:
-                    next.bg = new Color4((float)rnd.NextDouble(), (float)rnd.NextDouble(), (float)rnd.NextDouble(), 1.0f);
+                    //next.bg = new Color4((float)rnd.NextDouble(), (float)rnd.NextDouble(), (float)rnd.NextDouble(), 1.0f);
 
                     // Set this as the next frame ready to be rendered:
                     Interlocked.Exchange(ref ready, next);
@@ -647,17 +667,14 @@ namespace jsdoom
 
                 GL.EnableClientState(ArrayCap.VertexArray);
 
-                vboIds = new int[3];
-                GL.GenBuffers(3, vboIds);
+                vboIds = new int[2];
+                GL.GenBuffers(2, vboIds);
 
                 GL.BindBuffer(BufferTarget.ArrayBuffer, vboIds[0]);
                 GL.BufferData(BufferTarget.ArrayBuffer, new IntPtr(quadVerts.Length * Vector3.SizeInBytes), quadVerts, BufferUsageHint.StaticDraw);
 
                 GL.BindBuffer(BufferTarget.ElementArrayBuffer, vboIds[1]);
                 GL.BufferData(BufferTarget.ElementArrayBuffer, new IntPtr(quadIndices.Length * (sizeof(int) * 4)), quadIndices, BufferUsageHint.StaticDraw);
-
-                GL.BindBuffer(BufferTarget.ArrayBuffer, vboIds[2]);
-                GL.BufferData(BufferTarget.ArrayBuffer, new IntPtr(floorVerts.Length * Vector3.SizeInBytes), floorVerts, BufferUsageHint.StaticDraw);
 
                 GL.BindBuffer(BufferTarget.ArrayBuffer, 0);
                 GL.BindBuffer(BufferTarget.ElementArrayBuffer, 0);
@@ -677,7 +694,7 @@ namespace jsdoom
             GL.MatrixMode(MatrixMode.Modelview);
             GL.LoadMatrix(ref matrixModelview);
 
-#if false
+#if true
             // Draw wall points:
             GL.Color4(Color4.White);
 
@@ -699,23 +716,13 @@ namespace jsdoom
             GL.DrawElements(BeginMode.Quads, quadIndices.Length * 4, DrawElementsType.UnsignedInt, 0);
 #endif
 
-#if false
-            // Draw floor points:
-            GL.BindBuffer(BufferTarget.ArrayBuffer, vboIds[2]);
-            GL.VertexPointer(3, VertexPointerType.Float, 0, 0);
-
-            GL.Color4(Color4.White);
-
-            GL.DrawArrays(BeginMode.Points, 0, floorVerts.Length);
-#endif
-
 #if true
             // Draw floor polygons:
             var floorColor = Color4.Red;
             floorColor.A = 0.5f;
             GL.Color4(floorColor);
 
-            GL.BindBuffer(BufferTarget.ArrayBuffer, vboIds[2]);
+            GL.BindBuffer(BufferTarget.ArrayBuffer, vboIds[0]);
             GL.VertexPointer(3, VertexPointerType.Float, 0, 0);
 
             GL.BindBuffer(BufferTarget.ElementArrayBuffer, 0);
