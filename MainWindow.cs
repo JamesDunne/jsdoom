@@ -70,12 +70,14 @@ namespace jsdoom
         Matrix4 matrixProjection, matrixModelview;
         Vector3 centerPos;
         float cameraRotation = 0f;
-        const float cameraDistance = 1.2f;
-        const float cameraHeight = 0.75f;
+        float cameraDistance = 0.9f;
+        float cameraHeight = 0.8f;
+        const string mapLumpName = "map03";
 
         int[] vboIds;
         bool setup;
 
+        // Original DOOM data:
         Vertex[] vertexes;
         LineDef[] linedefs;
         SideDef[] sidedefs;
@@ -83,11 +85,11 @@ namespace jsdoom
         LineSeg[] segs;
         SubSector[] subsectors;
 
+        // Generated polygonal data:
         Quad[] quadIndices;
         Vector3[] quadVerts;
 
-        Polygon[] floorPolys;
-        int[] floorIndices;
+        Polygon[] floorPolys, ceilPolys;
 
         public MainWindow()
             : base()
@@ -338,9 +340,13 @@ namespace jsdoom
                     }
                 }
 
-                int ml = FindLump(lumps, "map01");
+                int ml = FindLump(lumps, mapLumpName);
 
-                // Read vertices:
+                // Find center of map:
+                var minPos = new Vertex(Int16.MaxValue, Int16.MaxValue);
+                var maxPos = new Vertex(Int16.MinValue, Int16.MinValue);
+
+                // Read vertexes:
                 var vertexesLump = lumps[ml + (int)MapLump.VERTEXES];
                 int numVertexes = vertexesLump.Size / (2 + 2);
                 vertexes = new Vertex[numVertexes];
@@ -349,8 +355,22 @@ namespace jsdoom
                     short x = BitConverter.ToInt16(vertexesLump.Data, i * 2 * sizeof(Int16));
                     short y = BitConverter.ToInt16(vertexesLump.Data, i * 2 * sizeof(Int16) + sizeof(Int16));
 
+                    if (x < minPos.X) minPos = new Vertex(x, minPos.Y);
+                    if (y < minPos.Y) minPos = new Vertex(minPos.X, y);
+                    if (x > maxPos.X) maxPos = new Vertex(x, maxPos.Y);
+                    if (y > maxPos.Y) maxPos = new Vertex(maxPos.X, y);
+
                     vertexes[i] = new Vertex(x, y);
                 }
+
+                // Calculate center:
+                int mapw = (maxPos.X - minPos.X);
+                int maph = (maxPos.Y - minPos.Y);
+                var center = new Vertex(mapw / 2 + minPos.X, maph / 2 + minPos.Y);
+                MapCoordToVector3(new Vertex3(center, 64), out centerPos);
+
+                cameraDistance = Math.Max(mapw, maph) / scale;
+                cameraHeight = cameraDistance * 0.8f;
 
                 // Read sectors:
                 var sectorsLump = lumps[ml + (int)MapLump.SECTORS];
@@ -577,16 +597,7 @@ namespace jsdoom
                 }
 
                 floorPolys = fPolys.ToArray();
-                floorIndices = new int[fIndices];
-                int n = 0;
-                for (int i = 0; i < floorPolys.Length; ++i)
-                {
-                    var v = floorPolys[i].V;
-                    Debug.Assert(floorPolys[i].StartIndex == n);
-                    Array.Copy(v, 0, floorIndices, n, v.Length);
-                    n += v.Length;
-                }
-
+                ceilPolys = cPolys.ToArray();
 
                 // Read things:
                 var thingsLump = lumps[ml + (int)MapLump.THINGS];
@@ -601,11 +612,13 @@ namespace jsdoom
                     short type = BitConverter.ToInt16(thingsLump.Data, (i * thingSize) + (sizeof(short) * 3));
                     short options = BitConverter.ToInt16(thingsLump.Data, (i * thingSize) + (sizeof(short) * 4));
 
+#if false
                     // Player #1 start:
                     if (type == 1)
                     {
                         MapCoordToVector3(x, y, 0, out centerPos);
                     }
+#endif
                 }
 
                 // Game loop:
@@ -714,22 +727,32 @@ namespace jsdoom
             GL.VertexPointer(3, VertexPointerType.Float, 0, 0);
             GL.BindBuffer(BufferTarget.ElementArrayBuffer, vboIds[1]);
             GL.DrawElements(BeginMode.Quads, quadIndices.Length * 4, DrawElementsType.UnsignedInt, 0);
+            GL.BindBuffer(BufferTarget.ElementArrayBuffer, 0);
 #endif
 
 #if true
             // Draw floor polygons:
             var floorColor = Color4.Red;
-            floorColor.A = 0.5f;
+            floorColor.A = 0.25f;
             GL.Color4(floorColor);
 
             GL.BindBuffer(BufferTarget.ArrayBuffer, vboIds[0]);
             GL.VertexPointer(3, VertexPointerType.Float, 0, 0);
 
-            GL.BindBuffer(BufferTarget.ElementArrayBuffer, 0);
             for (int i = 0; i < floorPolys.Length; ++i)
             {
                 var fp = floorPolys[i];
                 GL.DrawElements(BeginMode.Lines, fp.V.Length, DrawElementsType.UnsignedInt, fp.V);
+            }
+
+            // Draw ceiling polygons:
+            var ceilColor = Color4.Yellow;
+            ceilColor.A = 0.25f;
+            GL.Color4(ceilColor);
+            for (int i = 0; i < ceilPolys.Length; ++i)
+            {
+                var cp = ceilPolys[i];
+                GL.DrawElements(BeginMode.Lines, cp.V.Length, DrawElementsType.UnsignedInt, cp.V);
             }
 #endif
 
